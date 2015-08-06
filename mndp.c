@@ -32,6 +32,7 @@
 #endif
 #include <arpa/inet.h>
 #include <string.h>
+#include <net/if.h>
 #include "protocol.h"
 #include "config.h"
 
@@ -57,6 +58,7 @@ int mndp(int timeout, int batch_mode)  {
 	int sock,result;
 	int optval = 1;
 	struct sockaddr_in si_me, si_remote;
+/*	struct ifreq ifr;*/
 	unsigned char buff[MT_PACKET_LEN];
 
 #ifdef FROM_MACTELNET
@@ -77,13 +79,19 @@ int mndp(int timeout, int batch_mode)  {
 	si_me.sin_family = AF_INET;
 	si_me.sin_port = htons(MT_MNDP_PORT);
 	si_me.sin_addr.s_addr = htonl(INADDR_ANY);
+	inet_aton("192.168.88.101", &si_me.sin_addr);
 
 	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof (optval));
+/*	memset(&ifr, 0, sizeof(ifr));
+	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "eth1");
+	if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, &ifr, sizeof (ifr)) < 0) {
+		fprintf(stderr, _("Error binding to %s\n"), ifr.ifr_name);
+	}*/
 
 	/* Bind to specified address/port */
 	if (bind(sock, (struct sockaddr *)&si_me, sizeof(si_me))==-1) {
 		fprintf(stderr, _("Error binding to %s:%d\n"), inet_ntoa(si_me.sin_addr), MT_MNDP_PORT);
-		return 1;
+/*		return 1;*/
 	}
 
 	/* Write informative message to STDERR to make it easier to use the output in simple scripts */
@@ -105,10 +113,17 @@ int mndp(int timeout, int batch_mode)  {
 		}
 	}
 
+	sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof (optval));
+	si_me.sin_addr.s_addr = htonl(INADDR_ANY);
+	if (bind(sock, (struct sockaddr *)&si_me, sizeof(si_me))==-1) {
+		fprintf(stderr, _("Error binding to %s:%d\n"), inet_ntoa(si_me.sin_addr), MT_MNDP_PORT);
+		return 1;
+	}
 	if (batch_mode) {
-		printf("%s\n", _("MAC-Address,Identity,Platform,Version,Hardware,Uptime,Softid,Ifname"));
+		printf("%s\n", _("IP-Address,MAC-Address,Identity,Platform,Version,Hardware,Uptime,Softid,Ifname"));
 	} else {
-		printf("\n\E[1m%-17s %s\E[m\n", _("MAC-Address"), _("Identity (platform version hardware) uptime"));
+		printf("\n\E[1m%-17s %-15s %s\E[m\n", _("MAC-Address"), _("IP-Address"), _("Identity (platform version hardware) uptime"));
 	}
 #ifdef FROM_MACTELNET
 	if (timeout > 0) {
@@ -118,8 +133,10 @@ int mndp(int timeout, int batch_mode)  {
 
 	while(1) {
 		struct mt_mndp_info *packet;
+		struct sockaddr_in src_addr;
+		socklen_t src_addr_len = sizeof(src_addr);
 		/* Wait for a UDP packet */
-		result = recvfrom(sock, buff, MT_PACKET_LEN, 0, 0, 0);
+		result = recvfrom(sock, buff, MT_PACKET_LEN, 0, (struct sockaddr*)&src_addr, &src_addr_len);
 		if (result < 0) {
 			fprintf(stderr, _("An error occured. aborting\n"));
 			exit(1);
@@ -130,7 +147,7 @@ int mndp(int timeout, int batch_mode)  {
 
 		if (packet != NULL && !batch_mode) {
 			/* Print it */
-			printf("%-17s %s", ether_ntoa((struct ether_addr *)packet->address), packet->identity);
+			printf("%-17s %-15s %s", ether_ntoa((struct ether_addr *)packet->address), inet_ntoa(src_addr.sin_addr), packet->identity);
 			if (packet->platform != NULL) {
 				printf(" (%s %s %s)", packet->platform, packet->version, packet->hardware);
 			}
@@ -146,6 +163,7 @@ int mndp(int timeout, int batch_mode)  {
 			putchar('\n');
 		} else if (packet != NULL) {
 			/* Print it */
+			printf("'%s',", inet_ntoa(src_addr.sin_addr));
 			printf("'%s','%s',", ether_ntoa((struct ether_addr *)packet->address), packet->identity);
 			printf("'%s','%s','%s',", packet->platform, packet->version, packet->hardware);
 			printf("'%d','%s','%s'", packet->uptime, packet->softid, packet->ifname);
